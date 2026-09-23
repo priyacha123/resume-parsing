@@ -35,7 +35,7 @@ SECRET_KEY = 'django-insecure-ub3es6ia-q(s*71!l*bpd#7!t#ybt$+#6i1@#esn3j41)9-uas
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['localhost', 'everybody-display-gratitude.ngrok-free.dev', '127.0.0.1']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'everybody-display-gratitude.ngrok-free.dev', 'resume-parsing-np5i.onrender.com']
 
 
 # Application definition
