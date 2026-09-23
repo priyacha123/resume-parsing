@@ -14,13 +14,13 @@ COPY . .
 
 RUN mkdir -p logs media
 
+# start.sh needs execute permission before the user switch
+RUN chmod +x start.sh
+
 # Run as non-root user — don't run the app as root inside the container
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
-
-COPY start.sh .
-RUN chmod +x start.sh
 
 CMD ["./start.sh"]
