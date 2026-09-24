@@ -15,10 +15,47 @@ from .matching import compute_tfidf_score
 from .embeddings import compute_embedding, cosine_similarity_score
 from .tasks import compute_match_task, parse_resume_task
 from celery.result import AsyncResult
+from .tailoring import generate_tailoring_suggestions
 
 # Create your views here.
+# class ResumeUploadView(APIView):
+#     permission_classes = [permissions.IsAuthenticated]  
+
+#     def post(self, request):
+#         serializer = ResumeUploadSerializer(data=request.data)
+#         serializer.is_valid(raise_exception=True)
+
+#         file_obj = request.FILES['file']
+#         # Sanitize filename before storing — no path traversal via ../../
+#         safe_filename = file_obj.name.replace('/', '_').replace('\\', '_')
+
+#         # try:
+#         #     # Extract text from the uploaded file
+#         #     raw_text = extract_resume_text(resume.file, safe_filename)
+#         #     resume.raw_text = raw_text
+#         #     resume.save()
+
+#         # except Exception as e:
+#         #     return Response(
+#         #         {"error": f"Upload succeded but parsing failed: {str(e)}"},
+#         #         status = 207  # multi-status: file saved, parsing had an issue
+#         #     )
+
+#         # Trigger the asynchronous parsing task
+#         resume = serializer.save(
+#             user=request.user if request.user.is_authenticated else None, original_filename=safe_filename
+#         )
+
+
+#         # Parsing runs async — moved this into a Celery task
+#         parse_resume_task.delay(resume.id)
+
+#         # Return the serialized resume data
+#         return Response(ResumeUploadSerializer(resume).data, status = 202) # 202 = accepted, processing
+
+
 class ResumeUploadView(APIView):
-    permission_classes = [permissions.IsAuthenticated]  
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         serializer = ResumeUploadSerializer(data=request.data)
@@ -28,29 +65,24 @@ class ResumeUploadView(APIView):
         # Sanitize filename before storing — no path traversal via ../../
         safe_filename = file_obj.name.replace('/', '_').replace('\\', '_')
 
-        # try:
-        #     # Extract text from the uploaded file
-        #     raw_text = extract_resume_text(resume.file, safe_filename)
-        #     resume.raw_text = raw_text
-        #     resume.save()
-
-        # except Exception as e:
-        #     return Response(
-        #         {"error": f"Upload succeded but parsing failed: {str(e)}"},
-        #         status = 207  # multi-status: file saved, parsing had an issue
-        #     )
-
-        # Trigger the asynchronous parsing task
         resume = serializer.save(
-            user=request.user if request.user.is_authenticated else None, original_filename=safe_filename
+            user=request.user if request.user.is_authenticated else None,
+            original_filename=safe_filename
         )
 
+        # Synchronous parsing — Celery/Redis available locally (see docker-compose.yml),
+        # but this deploy runs inline due to Render free-tier memory constraints
+        try:
+            raw_text = extract_resume_text(resume.file, safe_filename)
+            resume.raw_text = raw_text
+            resume.save()
+        except Exception as e:
+            return Response(
+                {"error": f"Upload succeeded but parsing failed: {str(e)}"},
+                status=207  # multi-status: file saved, parsing had an issue
+            )
 
-        # Parsing runs async — moved this into a Celery task
-        parse_resume_task.delay(resume.id)
-
-        # Return the serialized resume data
-        return Response(ResumeUploadSerializer(resume).data, status = 202) # 202 = accepted, processing
+        return Response(ResumeUploadSerializer(resume).data, status=201)
 
 
 class JobDescriptionCreateView(generics.ListCreateAPIView):
@@ -68,47 +100,71 @@ class JobDescriptionCreateView(generics.ListCreateAPIView):
 class MatchCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated] 
 
+    # def post(self, request):
+    #     resume_id = request.data.get('resume_id')
+    #     jd_id = request.data.get('job_description_id')
+    #     method = request.data.get('method', 'embedding')  # Default to embedding if not specified
+
+    #     # resume = get_object_or_404(Resume, pk=resume_id)
+    #     # jd = get_object_or_404(JobDescription, pk=jd_id)
+
+    #     # if method == 'tfidf':
+    #     #     # Compute the TF-IDF similarity score
+    #     #     score = compute_tfidf_score(resume.raw_text, jd.raw_text)
+    #     # else:
+    #     #     # Compute + cache embeddings so repeat matches don't recompute
+    #     #     if not resume.embedding:
+    #     #         resume.embedding = compute_embedding(resume.raw_text)
+    #     #         resume.save()
+    #     #     if not jd.embedding:
+    #     #         jd.embedding = compute_embedding(jd.raw_text)
+    #     #         jd.save()
+    #     #     # Compute the cosine similarity score using embeddings
+    #     #     score = cosine_similarity_score(resume.embedding, jd.embedding)
+
+    #     # Create a MatchResult instance
+    #     # match = MatchResult.objects.create(
+    #     #     resume=resume,
+    #     #     job_description=jd,
+    #     #     score=score,
+    #     #     method=method
+    #     # )
+
+
+    #     # Ownership check — not just existence check. This is the IDOR fix.
+    #     resume = get_object_or_404(Resume, pk=resume_id, user=request.user)
+    #     jd = get_object_or_404(JobDescription, pk=jd_id, user=request.user)
+
+    #     task = compute_match_task.delay(resume.id, jd.id, method)
+
+    #     return Response({
+    #         "task_id": task.id,
+    #         "status": "processing",
+    #     }, status=202)  # 202 = accepted, processing
+
     def post(self, request):
         resume_id = request.data.get('resume_id')
         jd_id = request.data.get('job_description_id')
-        method = request.data.get('method', 'embedding')  # Default to embedding if not specified
+        method = request.data.get('method', 'embedding')
 
-        # resume = get_object_or_404(Resume, pk=resume_id)
-        # jd = get_object_or_404(JobDescription, pk=jd_id)
-
-        # if method == 'tfidf':
-        #     # Compute the TF-IDF similarity score
-        #     score = compute_tfidf_score(resume.raw_text, jd.raw_text)
-        # else:
-        #     # Compute + cache embeddings so repeat matches don't recompute
-        #     if not resume.embedding:
-        #         resume.embedding = compute_embedding(resume.raw_text)
-        #         resume.save()
-        #     if not jd.embedding:
-        #         jd.embedding = compute_embedding(jd.raw_text)
-        #         jd.save()
-        #     # Compute the cosine similarity score using embeddings
-        #     score = cosine_similarity_score(resume.embedding, jd.embedding)
-
-        # Create a MatchResult instance
-        # match = MatchResult.objects.create(
-        #     resume=resume,
-        #     job_description=jd,
-        #     score=score,
-        #     method=method
-        # )
-
-
-        # Ownership check — not just existence check. This is the IDOR fix.
         resume = get_object_or_404(Resume, pk=resume_id, user=request.user)
         jd = get_object_or_404(JobDescription, pk=jd_id, user=request.user)
 
-        task = compute_match_task.delay(resume.id, jd.id, method)
+        if not resume.embedding:
+            resume.embedding = compute_embedding(resume.raw_text)
+            resume.save()
+        if not jd.embedding:
+            jd.embedding = compute_embedding(jd.raw_text)
+            jd.save()
 
-        return Response({
-            "task_id": task.id,
-            "status": "processing",
-        }, status=202)  # 202 = accepted, processing
+        score = cosine_similarity_score(resume.embedding, jd.embedding)
+        match = MatchResult.objects.create(resume=resume, job_description=jd, score=score, method=method)
+
+        suggestions = generate_tailoring_suggestions(resume.raw_text, jd.raw_text)
+        match.suggestions = suggestions
+        match.save()
+
+        return Response(MatchResultSerializer(match).data, status=201)
 
 
 class TaskStatusView(APIView):
