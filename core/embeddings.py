@@ -23,15 +23,18 @@ import os
 import requests
 import numpy as np
 
-HF_API_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction"
 
 
 def compute_embedding(text: str):
     headers = {"Authorization": f"Bearer {os.environ.get('HF_API_TOKEN')}"}
-    response = requests.post(HF_API_URL, headers=headers, json={"inputs": text[:2000]})
-    response.raise_for_status()
+    try:
+        response = requests.post(HF_API_URL, headers=headers, json={"inputs": text[:2000]}, timeout=30)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Embedding service unavailable: {str(e)}")
+
     embedding = response.json()
-    # API returns a list per token sometimes — average-pool if nested
     arr = np.array(embedding)
     if arr.ndim > 1:
         arr = arr.mean(axis=0)
