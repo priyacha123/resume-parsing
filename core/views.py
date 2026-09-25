@@ -163,8 +163,13 @@ class MatchCreateView(APIView):
         # Ensure score is within valid range
         score = max(0.0, min(100.0, round(float(score), 1)))
 
-        # Generate intelligent tailoring suggestions
-        suggestions = generate_tailoring_suggestions(resume.raw_text, jd.raw_text)
+        # Generate intelligent tailoring suggestions customized to the scoring method
+        suggestions = generate_tailoring_suggestions(
+            resume.raw_text,
+            jd.raw_text,
+            method=used_method,
+            score=score
+        )
 
         match = MatchResult.objects.create(
             resume=resume,

@@ -52,7 +52,9 @@ def generate_suggestions_task(match_id):
     match = MatchResult.objects.get(pk=match_id)
     suggestions = generate_tailoring_suggestions(
         match.resume.raw_text,
-        match.job_description.raw_text
+        match.job_description.raw_text,
+        method=match.method,
+        score=match.score
     )
     match.suggestions = suggestions
     match.save()
