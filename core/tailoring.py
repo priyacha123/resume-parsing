@@ -52,6 +52,8 @@ EVALUATION OBJECTIVE:
 IMPORTANT RULES:
 - Include ALL missing keywords or skill gaps you find — do NOT limit to a fixed number.
 - Include ALL matched strengths you identify — do NOT truncate.
+- Suggest 3-5 realistic portfolio project ideas that close the most important gaps for this specific job and evaluation model.
+- Project ideas must be distinct from generic advice and should include practical features, technologies, and the resume value they demonstrate.
 - Include a separate suggestion entry for EVERY distinct section or issue you find. Do not merge unrelated issues into one bullet.
   Typical resumes may need suggestions for: Professional Summary, Technical Skills, Work Experience (per role), Education, Certifications, Projects, etc.
 - Be thorough and exhaustive. A near-perfect resume (90%+) may only need 2-3 suggestions, a weak match (below 50%) may need 8-15. Adjust accordingly.
@@ -63,6 +65,15 @@ Return ONLY a valid JSON object (no markdown fences, no conversational preamble)
   "overall_summary": "2-4 sentences providing a thorough executive critique specifically reflecting the {method_name} evaluation perspective.",
   "missing_keywords": ["every important missing keyword, tool, skill, certification, or domain term from the JD not present in the resume"],
   "matched_strengths": ["every concrete strength or skill from the resume that aligns with the JD requirements"],
+  "project_ideas": [
+    {{
+      "title": "Specific portfolio project name",
+      "rationale": "Why this project closes a gap for this role and this evaluation model",
+      "features": ["3-5 concrete features to implement"],
+      "technologies": ["Relevant technologies from the JD or adjacent tools"],
+      "resume_value": "The capability or measurable outcome this project could demonstrate on the resume"
+    }}
+  ],
   "suggestions": [
     {{
       "section": "Section name (e.g. Professional Summary, Technical Skills, Work Experience at [Company], Projects, Certifications)",
@@ -112,6 +123,7 @@ def generate_tailoring_suggestions(
             "overall_summary": "Please provide both resume and job description to generate suggestions.",
             "missing_keywords": [],
             "matched_strengths": [],
+            "project_ideas": [],
             "suggestions": []
         }
 
@@ -147,6 +159,7 @@ def generate_tailoring_suggestions(
                 "overall_summary": parsed.get("overall_summary", "Review complete."),
                 "missing_keywords": parsed.get("missing_keywords", []),
                 "matched_strengths": parsed.get("matched_strengths", []),
+                "project_ideas": parsed.get("project_ideas", []),
                 "suggestions": parsed.get("suggestions", [])
             }
     except Exception as e:
@@ -192,7 +205,8 @@ def generate_tailoring_suggestions(
         return {
             "overall_summary": f"Keyword Analysis: Candidate scored {score_str}%. The resume lacks key vocabulary tokens explicitly emphasized in the job posting. {len(missing)} distinct keyword gaps were identified.",
             "missing_keywords": missing,
-            "matched_strengths": ["Shared baseline technical vocabulary with the job description"],
+            "matched_strengths": _matched_strengths(resume_text, jd_text, active_key),
+            "project_ideas": _project_ideas(missing, active_key),
             "suggestions": suggestions
         }
     elif active_key == 'embedding':
@@ -220,7 +234,8 @@ def generate_tailoring_suggestions(
         return {
             "overall_summary": f"Semantic AI Analysis: Candidate scored {score_str}%. {len(missing)} conceptual domain gaps were identified beyond basic keyword matching.",
             "missing_keywords": missing,
-            "matched_strengths": ["Strong conceptual background matching core domain responsibilities"],
+            "matched_strengths": _matched_strengths(resume_text, jd_text, active_key),
+            "project_ideas": _project_ideas(missing, active_key),
             "suggestions": suggestions
         }
     else:
@@ -249,6 +264,65 @@ def generate_tailoring_suggestions(
         return {
             "overall_summary": f"Hybrid Analysis: Candidate scored {score_str}%. {len(missing)} keyword and narrative gaps identified across both ATS keyword and semantic dimensions.",
             "missing_keywords": missing,
-            "matched_strengths": ["Relevant professional background matching core job requirements"],
+            "matched_strengths": _matched_strengths(resume_text, jd_text, active_key),
+            "project_ideas": _project_ideas(missing, active_key),
             "suggestions": suggestions
         }
+
+
+def _matched_strengths(resume_text: str, jd_text: str, method: str) -> list[str]:
+    """Return a useful, model-specific fallback when the generative response is unavailable."""
+    shared = sorted(
+        {
+            word.strip('.,;():/"\'-')
+            for word in resume_text.lower().split()
+            if len(word.strip('.,;():/"\'-')) > 3
+            and word.strip('.,;():/"\'-').isalpha()
+            and word.strip('.,;():/"\'-') in jd_text.lower().split()
+        }
+    )
+    if method == 'tfidf':
+        return [f"Exact JD vocabulary overlap: {', '.join(shared[:8])}" if shared else "Some exact JD vocabulary overlap detected"]
+    if method == 'embedding':
+        return [
+            "Relevant conceptual background aligned with the role's responsibilities",
+            "Transferable problem-solving experience that can support the target domain",
+        ]
+    return [
+        f"Shared technical vocabulary: {', '.join(shared[:8])}" if shared else "Relevant technical vocabulary overlap",
+        "A foundation of experience that can be strengthened with targeted impact evidence",
+    ]
+
+
+def _project_ideas(missing: list[str], method: str) -> list[dict]:
+    """Provide actionable project ideas that vary with the selected evaluation model."""
+    gap_text = ', '.join(missing[:3]) if missing else 'the highest-priority job requirements'
+    if method == 'tfidf':
+        return [
+            {
+                "title": "ATS-ready technology showcase",
+                "rationale": f"Build a compact application that uses the missing terms {gap_text} explicitly in its implementation and documentation.",
+                "features": ["Searchable feature catalog", "Automated tests", "CI pipeline with linting and coverage", "Architecture and setup documentation"],
+                "technologies": missing[:4] or ["REST API", "Docker", "PostgreSQL"],
+                "resume_value": "Creates credible, keyword-supported evidence for the tools listed in the job description.",
+            }
+        ]
+    if method == 'embedding':
+        return [
+            {
+                "title": "Production-scale workflow platform",
+                "rationale": f"Demonstrate end-to-end ownership and system depth around {gap_text}, rather than only listing technologies.",
+                "features": ["Role-based workflow", "Background processing", "Observability dashboard", "Failure recovery and audit history"],
+                "technologies": missing[:4] or ["Python", "PostgreSQL", "Redis", "Docker"],
+                "resume_value": "Shows architecture decisions, reliability thinking, and measurable user or business outcomes.",
+            }
+        ]
+    return [
+        {
+            "title": "Intelligent job-readiness platform",
+            "rationale": f"Combine the most important gaps ({gap_text}) with a user-facing workflow that demonstrates both implementation and product judgment.",
+            "features": ["Personalized recommendations", "Search and filtering", "Async processing", "Metrics dashboard", "Secure API"],
+            "technologies": missing[:4] or ["React", "TypeScript", "Python", "PostgreSQL"],
+            "resume_value": "Provides a single project with keyword coverage, semantic relevance, measurable outcomes, and clear engineering tradeoffs.",
+        }
+    ]
