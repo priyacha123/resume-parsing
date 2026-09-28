@@ -20,9 +20,13 @@ class ResumeUploadTests(APITestCase):
         response = self.client.post('/api/resumes/upload/', {'file': big_file}, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_accepts_valid_pdf(self):
-        # Minimal valid-looking PDF bytes — good enough to pass extension/size checks
-        pdf_content = b"%PDF-1.4 fake but valid-looking content"
+    def test_rejects_malformed_pdf(self):
+        pdf_content = (
+            b"%PDF-1.4\n"
+            b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+            b"2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\n"
+            b"trailer<</Root 1 0 R>>\n%%EOF"
+        )
         valid_file = SimpleUploadedFile("resume.pdf", pdf_content, content_type="application/pdf")
         response = self.client.post('/api/resumes/upload/', {'file': valid_file}, format='multipart')
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

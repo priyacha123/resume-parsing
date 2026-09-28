@@ -27,4 +27,8 @@ jobs:
         run: python manage.py test
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+          DEBUG: 'False'
+          ALLOWED_HOSTS: localhost,127.0.0.1
+          CORS_ALLOWED_ORIGINS: http://localhost:3000
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}

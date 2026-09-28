@@ -6,7 +6,10 @@ def verify_signature(payload_body: bytes, signature_header: str) -> bool:
     if not signature_header:
         return False
 
-    secret = os.environ.get('WEBHOOK_SECRET').encode()
+    secret_value = os.environ.get('WEBHOOK_SECRET')
+    if not secret_value:
+        return False
+    secret = secret_value.encode()
     expected_signature = hmac.new(secret, payload_body, hashlib.sha256).hexdigest()
 
     # compare_digest prevents timing attacks — never use == for signature comparison

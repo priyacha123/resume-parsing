@@ -7,6 +7,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.throttling import AnonRateThrottle
+from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from .webhook_security import verify_signature
 from .models import Resume, JobDescription, MatchResult
 from .serializers import ResumeUploadSerializer, JobDescriptionSerializer, MatchResultSerializer
@@ -84,7 +85,12 @@ class MatchCreateView(APIView):
     def post(self, request):
         resume_id = request.data.get('resume_id')
         jd_id = request.data.get('job_description_id')
-        method = request.data.get('method', 'hybrid')  # hybrid, embedding, or tfidf
+        method = str(request.data.get('method', 'hybrid')).lower()
+        if method not in {'hybrid', 'embedding', 'tfidf'}:
+            return Response(
+                {"error": "method must be one of: hybrid, embedding, tfidf."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not resume_id or not jd_id:
             return Response(
@@ -136,7 +142,7 @@ class MatchCreateView(APIView):
             except Exception as e:
                 logger.warning(f"Embedding failed, falling back to TF-IDF: {e}")
                 score = compute_tfidf_score(resume.raw_text, jd.raw_text)
-                used_method = 'tfidf_fallback'
+                used_method = 'embedding_fallback'
         else:
             # Hybrid: Combines deep semantic similarity (70%) with exact keyword matching (30%)
             tfidf_score = compute_tfidf_score(resume.raw_text, jd.raw_text)
@@ -203,6 +209,13 @@ class TaskStatusView(APIView):
         })
 
 
+class HealthCheckView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({"status": "ok"}, status=status.HTTP_200_OK)
+
+
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_classes = [AnonRateThrottle]
@@ -224,6 +237,20 @@ class RegisterView(APIView):
 
         User.objects.create_user(username=username, password=password)
         return Response({"message": "User registered successfully."}, status=status.HTTP_201_CREATED)
+
+
+class LogoutView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({"error": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            RefreshToken(refresh_token).blacklist()
+        except TokenError:
+            return Response({"error": "Invalid or expired refresh token."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"message": "Logged out successfully."}, status=status.HTTP_200_OK)
 
 
 @method_decorator(csrf_exempt, name='dispatch')

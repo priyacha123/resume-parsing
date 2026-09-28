@@ -1,6 +1,7 @@
 from celery import shared_task
 from .models import Resume, JobDescription, MatchResult
 from .parsing import extract_resume_text
+from .matching import compute_tfidf_score
 from .embeddings import compute_embedding, cosine_similarity_score
 from .tailoring import generate_tailoring_suggestions
 import logging
@@ -21,25 +22,47 @@ def parse_resume_task(resume_id):
         return {"status": "failed", "error": str(e)}
 
 @shared_task
-def compute_match_task(resume_id, jd_id, method='embedding'):
+def compute_match_task(resume_id, jd_id, method='hybrid'):
     resume = Resume.objects.get(pk=resume_id)
     jd = JobDescription.objects.get(pk=jd_id)
 
-    if not resume.embedding:
-        resume.embedding = compute_embedding(resume.raw_text)
-        resume.save()
+    normalized_method = (method or 'hybrid').lower()
+    if normalized_method == 'tfidf':
+        score = compute_tfidf_score(resume.raw_text, jd.raw_text)
+    else:
+        tfidf_score = compute_tfidf_score(resume.raw_text, jd.raw_text)
+        embedding_score = None
 
-    if not jd.embedding:
-        jd.embedding = compute_embedding(jd.raw_text)
-        jd.save()
+        try:
+            if not resume.embedding:
+                resume.embedding = compute_embedding(resume.raw_text)
+                resume.save(update_fields=['embedding'])
+            if not jd.embedding:
+                jd.embedding = compute_embedding(jd.raw_text)
+                jd.save(update_fields=['embedding'])
+            embedding_score = cosine_similarity_score(resume.embedding, jd.embedding)
+        except Exception as exc:
+            logger.warning(
+                "Embedding failed for resume_id=%s, jd_id=%s: %s",
+                resume_id,
+                jd_id,
+                exc,
+            )
 
-    score = cosine_similarity_score(resume.embedding, jd.embedding)
+        if normalized_method == 'embedding':
+            score = embedding_score if embedding_score is not None else tfidf_score
+        elif embedding_score is not None:
+            score = (embedding_score * 0.65) + (tfidf_score * 0.35)
+        else:
+            score = tfidf_score
+
+    score = max(0.0, min(100.0, round(float(score), 1)))
 
     match = MatchResult.objects.create(
         resume=resume,
         job_description=jd,
         score=score,
-        method=method
+        method=normalized_method,
     )
 
     # Chain: kick off suggestion generation right after the match is scored

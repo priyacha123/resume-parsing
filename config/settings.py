@@ -31,12 +31,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    raise RuntimeError('DJANGO_SECRET_KEY must be configured.')
 # HF_API_TOKEN = os.environ.get('HF_API_TOKEN')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = os.environ.get('DEBUG', 'False').strip().lower() in {'1', 'true', 'yes', 'on'}
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'everybody-display-gratitude.ngrok-free.dev', 'resume-parsing-np5i.onrender.com']
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    if host.strip()
+]
 
 
 # Application definition
@@ -70,11 +76,19 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://resume-parsing-frontend-blue.vercel.app",
+    origin.strip()
+    for origin in os.environ.get(
+        'CORS_ALLOWED_ORIGINS',
+        'http://localhost:3000,http://127.0.0.1:3000',
+    ).split(',')
+    if origin.strip()
 ]
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOW_ALL_ORIGINS = DEBUG and os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'False').lower() == 'true'
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+]
 
 ROOT_URLCONF = 'config.urls'
 
@@ -168,26 +182,44 @@ STATIC_URL = 'static/'
 
 MAILERS = {
     'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        'BACKEND': os.environ.get(
+            'EMAIL_BACKEND',
+            'django.core.mail.backends.smtp.EmailBackend',
+        ),
+        'HOST': os.environ.get('EMAIL_HOST', ''),
+        'PORT': int(os.environ.get('EMAIL_PORT', '587')),
+        'USERNAME': os.environ.get('EMAIL_HOST_USER', ''),
+        'PASSWORD': os.environ.get('EMAIL_HOST_PASSWORD', ''),
+        'USE_TLS': os.environ.get('EMAIL_USE_TLS', 'True').lower() == 'true',
+        'USE_SSL': os.environ.get('EMAIL_USE_SSL', 'False').lower() == 'true',
     },
 }
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# Celery Configuration Options
-CELERY_BROKER_URL = os.environ.get('REDIS_URL')
-CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL')
+# Celery uses Upstash Redis for both task brokering and result storage.
+# Celery is configured only when the Upstash URL is present. The synchronous
+# /match/ endpoint does not require a running worker.
+UPSTASH_REDIS_URL = os.environ.get('UPSTASH_REDIS_URL')
+CELERY_BROKER_URL = UPSTASH_REDIS_URL
+CELERY_RESULT_BACKEND = UPSTASH_REDIS_URL
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
-CELERY_REDIS_BACKEND_USE_SSL = { 'ssl_cert_reqs': ssl.CERT_NONE }  # This line ensures that Celery can connect to Redis over SSL without certificate verification
-CELERY_BROKER_USE_SSL = { 'ssl_cert_reqs': ssl.CERT_NONE }
+CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': ssl.CERT_REQUIRED} if UPSTASH_REDIS_URL else {}
+CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': ssl.CERT_REQUIRED} if UPSTASH_REDIS_URL else {}
+CELERY_WORKER_CONCURRENCY = 3
+CELERY_TASK_TRACK_STARTED = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 
 # Production hardening (activate when DEBUG=False)
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'False').lower() == 'true'
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 CSRF_COOKIE_SECURE = True

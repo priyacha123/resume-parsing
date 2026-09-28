@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Resume, MatchResult, JobDescription
 import bleach
+import zipfile
 
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'txt'}
 MAX_FILE_SIZE_MB = 10
@@ -26,6 +27,20 @@ class ResumeUploadSerializer(serializers.ModelSerializer):
 
         if value.size > MAX_FILE_SIZE_MB * 1024 * 1024:
             raise serializers.ValidationError(f"File must be under {MAX_FILE_SIZE_MB} MB.")
+
+        header = value.read(8)
+        value.seek(0)
+        if ext == 'pdf' and not header.startswith(b'%PDF-'):
+            raise serializers.ValidationError("The uploaded file is not a valid PDF.")
+        if ext == 'docx':
+            try:
+                with zipfile.ZipFile(value) as archive:
+                    if '[Content_Types].xml' not in archive.namelist():
+                        raise serializers.ValidationError("The uploaded file is not a valid DOCX.")
+            except zipfile.BadZipFile as exc:
+                raise serializers.ValidationError("The uploaded file is not a valid DOCX.") from exc
+            finally:
+                value.seek(0)
 
         return value
 

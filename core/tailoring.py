@@ -1,13 +1,13 @@
 import os
 import json
 import logging
-import google.generativeai as genai
+import re
+from google import genai
 
 logger = logging.getLogger(__name__)
 
 api_key = os.environ.get("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
+gemini_client = genai.Client(api_key=api_key) if api_key else None
 
 METHOD_INSTRUCTIONS = {
     'tfidf': {
@@ -52,7 +52,7 @@ EVALUATION OBJECTIVE:
 IMPORTANT RULES:
 - Include ALL missing keywords or skill gaps you find — do NOT limit to a fixed number.
 - Include ALL matched strengths you identify — do NOT truncate.
-- Suggest 3-5 realistic portfolio project ideas that close the most important gaps for this specific job and evaluation model.
+- Suggest exactly 2 realistic portfolio project ideas that close the most important gaps for this specific job and evaluation model.
 - Project ideas must be distinct from generic advice and should include practical features, technologies, and the resume value they demonstrate.
 - Include a separate suggestion entry for EVERY distinct section or issue you find. Do not merge unrelated issues into one bullet.
   Typical resumes may need suggestions for: Professional Summary, Technical Skills, Work Experience (per role), Education, Certifications, Projects, etc.
@@ -108,6 +108,49 @@ def extract_json_from_response(raw: str) -> dict:
     return json.loads(raw)
 
 
+def _string_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _suggestion_list(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    return [
+        {
+            "section": item.get("section", "").strip(),
+            "issue": item.get("issue", "").strip(),
+            "fix": item.get("fix", "").strip(),
+        }
+        for item in value
+        if isinstance(item, dict)
+        and all(isinstance(item.get(key), str) for key in ("section", "issue", "fix"))
+    ]
+
+
+def _project_ideas_from_model(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    ideas = []
+    for item in value[:2]:
+        if not isinstance(item, dict):
+            continue
+        if not all(isinstance(item.get(key), str) for key in ("title", "rationale", "resume_value")):
+            continue
+        features = _string_list(item.get("features"))
+        technologies = _string_list(item.get("technologies"))
+        if features and technologies:
+            ideas.append({
+                "title": item["title"].strip(),
+                "rationale": item["rationale"].strip(),
+                "features": features,
+                "technologies": technologies,
+                "resume_value": item["resume_value"].strip(),
+            })
+    return ideas
+
+
 def generate_tailoring_suggestions(
     resume_text: str,
     jd_text: str,
@@ -142,7 +185,6 @@ def generate_tailoring_suggestions(
     score_str = f"{score:.1f}" if score is not None else "N/A"
 
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = SUGGESTION_PROMPT.format(
             role=method_config['role'],
             method_name=method_name,
@@ -152,15 +194,24 @@ def generate_tailoring_suggestions(
             jd_text=jd_text[:4000]
         )
 
-        response = model.generate_content(prompt)
+        if gemini_client is None:
+            raise RuntimeError("GEMINI_API_KEY is not configured")
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
         if response and response.text:
             parsed = extract_json_from_response(response.text)
+            project_ideas = _project_ideas_from_model(parsed.get("project_ideas"))
+            if len(project_ideas) < 2:
+                fallback_ideas = _project_ideas([], active_key)
+                project_ideas.extend(fallback_ideas[:2 - len(project_ideas)])
             return {
                 "overall_summary": parsed.get("overall_summary", "Review complete."),
-                "missing_keywords": parsed.get("missing_keywords", []),
-                "matched_strengths": parsed.get("matched_strengths", []),
-                "project_ideas": parsed.get("project_ideas", []),
-                "suggestions": parsed.get("suggestions", [])
+                "missing_keywords": _string_list(parsed.get("missing_keywords")),
+                "matched_strengths": _string_list(parsed.get("matched_strengths")),
+                "project_ideas": project_ideas[:2],
+                "suggestions": _suggestion_list(parsed.get("suggestions")),
             }
     except Exception as e:
         logger.warning(f"Gemini tailoring suggestions call failed: {e}")
@@ -272,13 +323,13 @@ def generate_tailoring_suggestions(
 
 def _matched_strengths(resume_text: str, jd_text: str, method: str) -> list[str]:
     """Return a useful, model-specific fallback when the generative response is unavailable."""
+    resume_tokens = set(re.findall(r"[a-z0-9+#.]+", resume_text.lower()))
+    jd_tokens = set(re.findall(r"[a-z0-9+#.]+", jd_text.lower()))
     shared = sorted(
         {
-            word.strip('.,;():/"\'-')
-            for word in resume_text.lower().split()
-            if len(word.strip('.,;():/"\'-')) > 3
-            and word.strip('.,;():/"\'-').isalpha()
-            and word.strip('.,;():/"\'-') in jd_text.lower().split()
+            word
+            for word in resume_tokens.intersection(jd_tokens)
+            if len(word) > 3
         }
     )
     if method == 'tfidf':
@@ -305,7 +356,14 @@ def _project_ideas(missing: list[str], method: str) -> list[dict]:
                 "features": ["Searchable feature catalog", "Automated tests", "CI pipeline with linting and coverage", "Architecture and setup documentation"],
                 "technologies": missing[:4] or ["REST API", "Docker", "PostgreSQL"],
                 "resume_value": "Creates credible, keyword-supported evidence for the tools listed in the job description.",
-            }
+            },
+            {
+                "title": "Keyword-driven developer productivity tool",
+                "rationale": f"Create a practical tool that reinforces the missing ATS vocabulary ({gap_text}) through real implementation choices and technical documentation.",
+                "features": ["Import and export workflows", "Searchable results", "Automated unit and integration tests", "CI/CD status reporting"],
+                "technologies": missing[4:8] or ["React", "Python", "REST API", "GitHub Actions"],
+                "resume_value": "Demonstrates hands-on use of job-specific technologies instead of listing them without supporting evidence.",
+            },
         ]
     if method == 'embedding':
         return [
@@ -315,7 +373,14 @@ def _project_ideas(missing: list[str], method: str) -> list[dict]:
                 "features": ["Role-based workflow", "Background processing", "Observability dashboard", "Failure recovery and audit history"],
                 "technologies": missing[:4] or ["Python", "PostgreSQL", "Redis", "Docker"],
                 "resume_value": "Shows architecture decisions, reliability thinking, and measurable user or business outcomes.",
-            }
+            },
+            {
+                "title": "Resilient analytics and operations system",
+                "rationale": f"Demonstrate system ownership and operational maturity by solving a realistic business problem related to {gap_text}.",
+                "features": ["Event-driven data ingestion", "Role-based dashboards", "Retry and dead-letter handling", "Performance and availability metrics"],
+                "technologies": missing[4:8] or ["FastAPI", "Redis", "PostgreSQL", "Docker"],
+                "resume_value": "Adds evidence of scalability, observability, fault tolerance, and measurable engineering impact.",
+            },
         ]
     return [
         {
@@ -324,5 +389,12 @@ def _project_ideas(missing: list[str], method: str) -> list[dict]:
             "features": ["Personalized recommendations", "Search and filtering", "Async processing", "Metrics dashboard", "Secure API"],
             "technologies": missing[:4] or ["React", "TypeScript", "Python", "PostgreSQL"],
             "resume_value": "Provides a single project with keyword coverage, semantic relevance, measurable outcomes, and clear engineering tradeoffs.",
+        },
+        {
+            "title": "Cloud-native collaboration workspace",
+            "rationale": f"Build a collaborative product that applies the target role's technical requirements to a realistic workflow involving {gap_text}.",
+            "features": ["Secure authentication", "Real-time collaboration", "Background notifications", "Search and filtering", "Deployment monitoring"],
+            "technologies": missing[4:8] or ["Next.js", "TypeScript", "Python", "Docker"],
+            "resume_value": "Shows full-stack delivery, product thinking, cloud deployment, and the ability to connect multiple requirements into one coherent system.",
         }
     ]
