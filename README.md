@@ -46,17 +46,7 @@ HF_API_TOKEN=
 WEBHOOK_SECRET=replace-with-a-webhook-secret
 ```
 
-On Render, set `ALLOWED_HOSTS` to the backend hostname, for example:
-
-```env
-ALLOWED_HOSTS=resume-parsing-np5i.onrender.com
-```
-
-Render also provides `RENDER_EXTERNAL_HOSTNAME`; the settings automatically include that hostname when it is available.
-
-`UPSTASH_REDIS_URL` is required only when running Celery. The main `/api/match/` flow is synchronous.
-
-## Email configuration
+<!-- ## Email configuration
 
 The project currently does not send registration, password-reset, or notification emails. Django is configured for a generic SMTP provider so email can be enabled later without adding a cloud-specific service.
 
@@ -73,7 +63,7 @@ EMAIL_USE_SSL=False
 DEFAULT_FROM_EMAIL=your-email@example.com
 ```
 
-Use either TLS on port `587` or SSL on port `465`; do not enable both. For Gmail, use an app password rather than your normal account password. The SMTP provider can be Gmail, Outlook, Brevo, Mailgun, or another non-AWS provider.
+Use either TLS on port `587` or SSL on port `465`; do not enable both. For Gmail, use an app password rather than your normal account password. The SMTP provider can be Gmail, Outlook, Brevo, Mailgun, or another non-AWS provider. -->
 
 ## API endpoints
 
@@ -105,78 +95,3 @@ Example match request:
 
 Supported methods are `tfidf`, `embedding`, and `hybrid`.
 
-## Gemini integration
-
-The backend uses the current `google-genai` SDK:
-
-```python
-from google import genai
-
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents="...",
-)
-```
-
-The deprecated `google-generativeai` package is not used.
-
-## Docker
-
-```powershell
-Copy-Item .env.example .env
-docker compose up --build -d
-docker compose exec web python manage.py migrate
-```
-
-The default stack runs Django and Nginx. It does not start local Redis.
-
-To explicitly run the optional Celery worker:
-
-```powershell
-docker compose --profile worker up --build -d
-```
-
-The worker uses Upstash through `UPSTASH_REDIS_URL` and is capped at three concurrent processes.
-
-## Render deployment
-
-Create a Render Web Service using this directory as the root:
-
-- Runtime: Docker
-- Release command: `python manage.py migrate`
-- Health check path: `/api/health/`
-
-Set these environment variables:
-
-```text
-DJANGO_SECRET_KEY
-DATABASE_URL
-ALLOWED_HOSTS
-CORS_ALLOWED_ORIGINS
-CSRF_TRUSTED_ORIGINS
-SECURE_SSL_REDIRECT=True
-GEMINI_API_KEY
-HF_API_TOKEN
-WEBHOOK_SECRET
-UPSTASH_REDIS_URL
-```
-
-Use deployed origins, not paths, for CORS and CSRF values:
-
-```text
-ALLOWED_HOSTS=resume-parsing-np5i.onrender.com
-CORS_ALLOWED_ORIGINS=https://your-frontend.onrender.com
-CSRF_TRUSTED_ORIGINS=https://your-frontend.onrender.com
-```
-
-Render free plans do not provide Background Workers. The current matching endpoint does not require one.
-
-## Validation
-
-```powershell
-.\venv\Scripts\python.exe manage.py check
-.\venv\Scripts\python.exe manage.py test
-```
-
-Uploaded files are stored on the server's local `MEDIA_ROOT` only; no S3 or AWS storage backend is configured. Render disk storage is ephemeral unless you attach a paid persistent disk, so uploaded files can disappear after redeploys or restarts. Never commit `.env`, uploaded resumes, or API keys. Rotate any credentials that have been exposed.
