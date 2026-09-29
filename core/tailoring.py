@@ -55,10 +55,21 @@ IMPORTANT RULES:
 - Suggest exactly 2 realistic portfolio project ideas that close the most important gaps for this specific job and evaluation model.
 - Base each project on the candidate's actual resume background, existing projects, and the specific job requirements. Do not reuse generic project titles when the resume or job requirements provide more specific domains or technologies.
 - Project ideas must be distinct from generic advice and should include practical features, technologies, and the resume value they demonstrate.
-- Include a separate suggestion entry for EVERY distinct section or issue you find. Do not merge unrelated issues into one bullet.
-  Typical resumes may need suggestions for: Professional Summary, Technical Skills, Work Experience (per role), Education, Certifications, Projects, etc.
-- Be thorough and exhaustive. A near-perfect resume (90%+) may only need 2-3 suggestions, a weak match (below 50%) may need 8-15. Adjust accordingly.
-- Every suggestion's "fix" must be concrete and directly actionable — not generic advice.
+
+FORMATTING RULES (apply to every regular section — Professional Summary, Technical Skills, Work Experience, Education, Certifications, and any other section that applies):
+- Group all suggestions under their section name — one block per section, never mixed across sections.
+- Each section gets at most 5 short bullet points. If more issues exist, keep only the 5 highest-impact ones.
+- Each bullet is a single concise sentence, no more than 18 words, suitable for a one-line UI block. Never concatenate multiple issues into one long sentence or paragraph.
+- Deduplicate — if two potential bullets say substantially the same thing, keep only the stronger phrasing and drop the other.
+- Work Experience gets one block per role, keyed by "Work Experience at [Company]" — do not combine multiple roles into a single block.
+- Only include sections that are actually relevant to this resume/JD pair. Do not output an empty section.
+- Be thorough but disciplined: a near-perfect resume (90%+) may only need 1-2 sections with 1-2 bullets each; a weak match (below 50%) may use the full 5-bullet cap across most sections.
+- Every bullet must be concrete and directly actionable — never generic advice like "improve your summary."
+
+PROJECT SECTION RULES (separate from the sections above):
+- For each existing resume project that's relevant to this JD, and for each of the 2 new suggested project ideas, provide 3-5 concise resume-ready achievement bullets.
+- Each bullet uses an action verb, is directly adaptable into a resume, and includes a measurable outcome wherever realistically possible (e.g. "Reduced query latency by 40% via indexed lookups" rather than "Improved performance").
+- Keep each project bullet to one line — no run-on sentences.
 
 Return ONLY a valid JSON object (no markdown fences, no conversational preamble) matching this exact schema:
 
@@ -72,17 +83,23 @@ Return ONLY a valid JSON object (no markdown fences, no conversational preamble)
       "rationale": "Why this project closes a gap for this role and this evaluation model",
       "features": ["3-5 concrete features to implement"],
       "technologies": ["Relevant technologies from the JD or adjacent tools"],
-      "resume_value": "The capability or measurable outcome this project could demonstrate on the resume"
+      "resume_value": "The capability or measurable outcome this project could demonstrate on the resume",
+      "bullets": ["3-5 resume-ready achievement bullets for this NEW project, written as if already completed"]
     }}
   ],
-  "suggestions": [
-    {{
-      "section": "Section name (e.g. Professional Summary, Technical Skills, Work Experience at [Company], Projects, Certifications)",
-      "issue": "Specific weakness, omission, or phrasing gap identified from this evaluation model's perspective",
-      "fix": "Actionable, concrete rewrite or addition — include example phrasing or metrics where possible"
+  "sections": {{
+    "Professional Summary": ["bullet 1", "bullet 2"],
+    "Technical Skills": ["bullet 1", "bullet 2"],
+    "Work Experience at [Company Name]": ["bullet 1", "bullet 2"],
+    "Education": ["bullet 1"],
+    "Certifications": ["bullet 1"],
+    "Projects": {{
+      "[Existing Project Name From Resume]": ["bullet 1", "bullet 2", "bullet 3"]
     }}
-  ]
+  }}
 }}
+
+Only include keys in "sections" that are genuinely relevant — omit any section with nothing meaningful to say rather than returning an empty array.
 
 RESUME:
 {resume_text}
@@ -90,6 +107,23 @@ RESUME:
 JOB DESCRIPTION:
 {jd_text}
 """
+
+# SUGGESTION_PROMPT = """You are a resume optimization assistant. Compare the resume below against the job description and return ONLY a JSON object (no markdown, no preamble) in this exact shape:
+
+# {{
+#   "missing_keywords": ["list of important JD keywords/skills absent from the resume"],
+#   "suggestions": [
+#     {{"section": "e.g. Experience bullet #2", "issue": "what's weak", "fix": "concrete rewrite suggestion"}}
+#   ],
+#   "overall_summary": "2-3 sentence summary of the biggest gaps"
+# }}
+
+# RESUME:
+# {resume_text}
+
+# JOB DESCRIPTION:
+# {jd_text}
+# """
 
 
 def extract_json_from_response(raw: str) -> dict:
@@ -115,58 +149,103 @@ def _string_list(value) -> list[str]:
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
-def _suggestion_list(value) -> list[dict]:
+def _suggestion_list(value, sections=None) -> list[dict]:
+    suggestions = []
+    if isinstance(sections, dict):
+        for section, content in sections.items():
+            if isinstance(content, dict):
+                for subsection, bullets in content.items():
+                    suggestions.append(_section_block(
+                        f"{section}: {subsection}",
+                        f"Improve the {subsection} subsection.",
+                        bullets,
+                    ))
+            else:
+                suggestions.append(_section_block(
+                    section,
+                    f"Improve the {section} section.",
+                    content,
+                ))
+        return _limit_suggestions(suggestions)
+
     if not isinstance(value, list):
         return []
-    suggestions = [
-        {
-            "section": item.get("section", "").strip(),
-            "issue": item.get("issue", "").strip(),
-            "fix": item.get("fix", "").strip(),
-        }
-        for item in value
-        if isinstance(item, dict)
-        and all(isinstance(item.get(key), str) for key in ("section", "issue", "fix"))
-    ]
-    return _group_suggestions(suggestions)
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        if not all(isinstance(item.get(key), str) for key in ("section", "issue", "fix")):
+            continue
+        fixes = item.get("recommendations")
+        if not isinstance(fixes, list):
+            fixes = _split_recommendations(item["fix"])
+        suggestions.append(_section_block(item["section"], item["issue"], fixes))
+    return _limit_suggestions(suggestions)
 
 
-def _suggestion_group_key(section: str) -> str:
-    normalized = re.sub(r"\s+", " ", section.strip().lower())
-    if "project" in normalized:
-        return normalized
-    if any(term in normalized for term in ("skill", "keyword", "technology", "tech stack")):
-        return "technical skills"
-    if "summary" in normalized or "objective" in normalized:
-        return "professional summary"
-    if any(term in normalized for term in ("work experience", "experience", "employment", "career")):
-        return "work experience"
-    if "education" in normalized:
-        return "education"
-    if "certif" in normalized:
-        return "certifications"
-    return normalized
+def _section_block(section: str, issue: str, fixes) -> dict:
+    bullets = []
+    if isinstance(fixes, list):
+        for fix in fixes:
+            if isinstance(fix, str):
+                bullets.extend(_split_recommendations(fix))
+    elif isinstance(fixes, str):
+        bullets = _split_recommendations(fixes)
+    unique_bullets = []
+    seen = set()
+    for bullet in bullets:
+        concise = _shorten_text(bullet, 180)
+        key = concise.lower()
+        if concise and key not in seen:
+            seen.add(key)
+            unique_bullets.append(concise)
+    return {
+        "section": section.strip() or "General Resume",
+        "issue": _shorten_text(issue, 150),
+        "fix": unique_bullets[0] if unique_bullets else "Add a specific, measurable improvement for this section.",
+        "recommendations": unique_bullets[:5],
+    }
 
 
-def _group_suggestions(suggestions: list[dict]) -> list[dict]:
-    grouped: dict[str, dict] = {}
-    order: list[str] = []
+def _split_recommendations(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+|(?<=;)\s+", text.strip())
+    cleaned = []
+    for part in parts:
+        value = re.sub(r"^\s*[-•]\s*", "", part).strip()
+        if value and value not in cleaned:
+            cleaned.append(value)
+    return cleaned or [text.strip()]
+
+
+def _shorten_text(text: str, limit: int = 150) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rsplit(' ', 1)[0]}..."
+
+
+def _limit_suggestions(suggestions: list[dict]) -> list[dict]:
+    grouped = {}
+    order = []
     for suggestion in suggestions:
-        section = suggestion["section"] or "General Resume"
-        key = _suggestion_group_key(section)
+        section = suggestion["section"].strip() or "General Resume"
+        key = section.lower()
+        block = _section_block(
+            section,
+            suggestion["issue"],
+            suggestion.get("recommendations") or [suggestion["fix"]],
+        )
         if key not in grouped:
-            grouped[key] = {
-                "section": section if "project" in key else key.title(),
-                "issue": suggestion["issue"],
-                "fix": suggestion["fix"],
-            }
+            grouped[key] = block
             order.append(key)
             continue
-
-        grouped[key]["issue"] += f" {suggestion['issue']}"
-        grouped[key]["fix"] += f" {suggestion['fix']}"
-
-    return [grouped[key] for key in order]
+        existing = grouped[key]["recommendations"]
+        for bullet in block["recommendations"]:
+            if bullet.lower() not in {item.lower() for item in existing} and len(existing) < 5:
+                existing.append(bullet)
+        grouped[key]["fix"] = existing[0] if existing else grouped[key]["fix"]
+        if len(order) == 10:
+            break
+    return [grouped[key] for key in order[:10]]
 
 
 def _project_ideas_from_model(value) -> list[dict]:
@@ -251,7 +330,10 @@ def generate_tailoring_suggestions(
                 "missing_keywords": _string_list(parsed.get("missing_keywords")),
                 "matched_strengths": _string_list(parsed.get("matched_strengths")),
                 "project_ideas": project_ideas[:2],
-                "suggestions": _suggestion_list(parsed.get("suggestions")),
+                "suggestions": _suggestion_list(
+                    parsed.get("suggestions"),
+                    parsed.get("sections"),
+                ),
             }
     except Exception as e:
         logger.warning(f"Gemini tailoring suggestions call failed: {e}")
@@ -278,86 +360,81 @@ def generate_tailoring_suggestions(
     missing = diff_words  # No artificial cap — return all gaps found
 
     if active_key == 'tfidf':
-        # Build one keyword-insertion suggestion per 3 missing keywords (group them cleanly)
-        suggestions = []
-        for i in range(0, max(len(missing), 1), 3):
-            chunk = missing[i:i + 3]
-            if chunk:
-                suggestions.append({
-                    "section": "Technical Skills / Keywords",
-                    "issue": f"Exact JD keyword tokens absent: {', '.join(chunk)}.",
-                    "fix": f"Add these exact terms to your Skills section and weave them naturally into relevant Work Experience bullets: {', '.join(chunk)}."
-                })
-        suggestions.append({
-            "section": "Work Experience Bullets (All Roles)",
-            "issue": "High-value JD terms are under-represented across your work history, reducing TF-IDF relevance density.",
-            "fix": "In each role, rephrase existing bullets to naturally include relevant JD vocabulary. Repeating key terms across multiple sections meaningfully raises your ATS keyword score."
-        })
+        keyword_bullets = [
+            f"Add {keyword} to Technical Skills and one relevant experience bullet."
+            for keyword in missing[:5]
+        ]
+        suggestions = [
+            _section_block(
+                "Technical Skills",
+                "Important job-description keywords are missing from the resume.",
+                keyword_bullets or ["List the most relevant tools from the job description in your Skills section."],
+            ),
+            _section_block(
+                "Work Experience",
+                "Experience bullets do not show enough evidence for the target requirements.",
+                ["Rewrite relevant bullets using the job description's terminology and measurable outcomes."],
+            ),
+        ]
         return {
             "overall_summary": f"Keyword Analysis: Candidate scored {score_str}%. The resume lacks key vocabulary tokens explicitly emphasized in the job posting. {len(missing)} distinct keyword gaps were identified.",
             "missing_keywords": missing,
             "matched_strengths": _matched_strengths(resume_text, jd_text, active_key),
             "project_ideas": _project_ideas(missing, active_key, resume_text, jd_text),
-            "suggestions": _group_suggestions(suggestions)
+            "suggestions": _limit_suggestions(suggestions)
         }
     elif active_key == 'embedding':
-        # Semantic fallback: produce one suggestion per missing domain term plus general depth suggestions
-        suggestions = []
-        for kw in missing:
-            suggestions.append({
-                "section": "Work Experience or Projects",
-                "issue": f"Conceptual domain of '{kw}' is absent or underrepresented in context.",
-                "fix": f"Add concrete examples demonstrating work involving {kw}, with outcome-driven framing: 'Designed and deployed [solution using {kw}] resulting in [measurable outcome].'"
-            })
-        # Always include structural semantic suggestions
-        suggestions.extend([
-            {
-                "section": "Professional Summary",
-                "issue": "Lacks a clear executive statement of seniority, specialization, and scope of impact.",
-                "fix": "Open with: '[X]+ years of [domain] engineering experience, delivering [scale/complexity] systems used by [audience/impact]. Expert in [key technologies from JD].' — make it role-specific."
-            },
-            {
-                "section": "Work Experience Impact",
-                "issue": "Bullet points describe responsibilities rather than measurable business outcomes.",
-                "fix": "Reframe using: 'Led [initiative], achieving [quantified result] by implementing [approach].' Include metrics: percentages, user counts, latency improvements, revenue impact."
-            }
-        ])
+        domain_bullets = [
+            f"Show a concrete project or achievement using {keyword}."
+            for keyword in missing[:5]
+        ]
+        suggestions = [
+            _section_block(
+                "Professional Summary",
+                "The summary does not clearly communicate role fit and impact.",
+                ["State your specialization, seniority, and strongest technologies in the opening sentence."],
+            ),
+            _section_block(
+                "Work Experience",
+                "Experience bullets emphasize duties more than outcomes.",
+                domain_bullets or ["Add measurable outcomes, technical decisions, and business impact to key bullets."],
+            ),
+        ]
         return {
             "overall_summary": f"Semantic AI Analysis: Candidate scored {score_str}%. {len(missing)} conceptual domain gaps were identified beyond basic keyword matching.",
             "missing_keywords": missing,
             "matched_strengths": _matched_strengths(resume_text, jd_text, active_key),
             "project_ideas": _project_ideas(missing, active_key, resume_text, jd_text),
-            "suggestions": _group_suggestions(suggestions)
+            "suggestions": _limit_suggestions(suggestions)
         }
     else:
-        # Hybrid: combine keyword-insertion + impact/narrative suggestions
-        suggestions = []
-        for i in range(0, max(len(missing), 1), 3):
-            chunk = missing[i:i + 3]
-            if chunk:
-                suggestions.append({
-                    "section": "Technical Skills / Keywords",
-                    "issue": f"These JD-critical terms are absent: {', '.join(chunk)}.",
-                    "fix": f"Explicitly list {', '.join(chunk)} in your Skills section. Then weave each into a Work Experience bullet to maximize both keyword frequency and semantic context."
-                })
-        suggestions.extend([
-            {
-                "section": "Professional Summary",
-                "issue": "Does not immediately signal alignment with the target role's title and core competencies.",
-                "fix": "Rewrite the summary to mirror the JD's language: include seniority level, core domain, and 2-3 key technologies from the job posting in the first sentence."
-            },
-            {
-                "section": "Work Experience Impact",
-                "issue": "Bullets describe tasks but lack quantifiable impact statements that signal seniority.",
-                "fix": "Apply X-Y-Z framing: 'Accomplished [X], as measured by [Y], by doing [Z].' Add metrics (e.g., 40% latency reduction, 2M+ users, 99.9% uptime)."
-            }
-        ])
+        keyword_bullets = [
+            f"Add {keyword} to Technical Skills and one relevant experience bullet."
+            for keyword in missing[:5]
+        ]
+        suggestions = [
+            _section_block(
+                "Technical Skills",
+                "Important job-description keywords are missing from the resume.",
+                keyword_bullets or ["List the most relevant tools from the job description in your Skills section."],
+            ),
+            _section_block(
+                "Professional Summary",
+                "The summary does not clearly signal alignment with the target role.",
+                ["Mention the target role, seniority, domain, and two relevant technologies."],
+            ),
+            _section_block(
+                "Work Experience",
+                "Experience bullets need stronger keyword context and measurable impact.",
+                ["Rewrite key bullets with relevant technologies, actions, and measurable outcomes."],
+            ),
+        ]
         return {
             "overall_summary": f"Hybrid Analysis: Candidate scored {score_str}%. {len(missing)} keyword and narrative gaps identified across both ATS keyword and semantic dimensions.",
             "missing_keywords": missing,
             "matched_strengths": _matched_strengths(resume_text, jd_text, active_key),
             "project_ideas": _project_ideas(missing, active_key, resume_text, jd_text),
-            "suggestions": _group_suggestions(suggestions)
+            "suggestions": _limit_suggestions(suggestions)
         }
 
 
