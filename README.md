@@ -48,6 +48,25 @@ WEBHOOK_SECRET=replace-with-a-webhook-secret
 
 `UPSTASH_REDIS_URL` is required only when running Celery. The main `/api/match/` flow is synchronous.
 
+## Email configuration
+
+The project currently does not send registration, password-reset, or notification emails. Django is configured for a generic SMTP provider so email can be enabled later without adding a cloud-specific service.
+
+If you need SMTP email, add these values to `.env`:
+
+```env
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=your-email@example.com
+EMAIL_HOST_PASSWORD=your-email-password-or-app-password
+EMAIL_USE_TLS=True
+EMAIL_USE_SSL=False
+DEFAULT_FROM_EMAIL=your-email@example.com
+```
+
+Use either TLS on port `587` or SSL on port `465`; do not enable both. For Gmail, use an app password rather than your normal account password. The SMTP provider can be Gmail, Outlook, Brevo, Mailgun, or another non-AWS provider.
+
 ## API endpoints
 
 All endpoints are prefixed with `/api/`.
@@ -143,4 +162,4 @@ Render free plans do not provide Background Workers. The current matching endpoi
 .\venv\Scripts\python.exe manage.py test
 ```
 
-Never commit `.env`, uploaded resumes, or API keys. Rotate any credentials that have been exposed.
+Uploaded files are stored on the server's local `MEDIA_ROOT` only; no S3 or AWS storage backend is configured. Render disk storage is ephemeral unless you attach a paid persistent disk, so uploaded files can disappear after redeploys or restarts. Never commit `.env`, uploaded resumes, or API keys. Rotate any credentials that have been exposed.
