@@ -38,11 +38,23 @@ if not SECRET_KEY:
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'False').strip().lower() in {'1', 'true', 'yes', 'on'}
 
-ALLOWED_HOSTS = [
-    host.strip()
+def normalize_host(value):
+    host = value.strip().lower()
+    if '://' in host:
+        host = host.split('://', 1)[1]
+    return host.split('/', 1)[0].split(':', 1)[0]
+
+
+configured_hosts = [
+    normalize_host(host)
     for host in os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
     if host.strip()
 ]
+render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '').strip()
+normalized_render_hostname = normalize_host(render_hostname) if render_hostname else ''
+if normalized_render_hostname and normalized_render_hostname not in configured_hosts:
+    configured_hosts.append(normalized_render_hostname)
+ALLOWED_HOSTS = configured_hosts
 
 
 # Application definition

@@ -46,6 +46,14 @@ HF_API_TOKEN=
 WEBHOOK_SECRET=replace-with-a-webhook-secret
 ```
 
+On Render, set `ALLOWED_HOSTS` to the backend hostname, for example:
+
+```env
+ALLOWED_HOSTS=resume-parsing-np5i.onrender.com
+```
+
+Render also provides `RENDER_EXTERNAL_HOSTNAME`; the settings automatically include that hostname when it is available.
+
 `UPSTASH_REDIS_URL` is required only when running Celery. The main `/api/match/` flow is synchronous.
 
 ## Email configuration
@@ -146,11 +154,20 @@ DJANGO_SECRET_KEY
 DATABASE_URL
 ALLOWED_HOSTS
 CORS_ALLOWED_ORIGINS
+CSRF_TRUSTED_ORIGINS
 SECURE_SSL_REDIRECT=True
 GEMINI_API_KEY
 HF_API_TOKEN
 WEBHOOK_SECRET
 UPSTASH_REDIS_URL
+```
+
+Use deployed origins, not paths, for CORS and CSRF values:
+
+```text
+ALLOWED_HOSTS=resume-parsing-np5i.onrender.com
+CORS_ALLOWED_ORIGINS=https://your-frontend.onrender.com
+CSRF_TRUSTED_ORIGINS=https://your-frontend.onrender.com
 ```
 
 Render free plans do not provide Background Workers. The current matching endpoint does not require one.
